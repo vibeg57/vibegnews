@@ -6,7 +6,7 @@ app = FastAPI()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-BOT_NAME = "VibegBot"
+BOT_NAME = "vibegnewsbot"
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 

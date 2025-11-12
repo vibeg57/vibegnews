@@ -1,4 +1,4 @@
-# VibegBot — Telegram бот-помощник для vibegnews.tilda.ws
+# vibegnewsbot — Telegram бот-помощник для vibegnews.tilda.ws
 
 ## 🔧 Настройка
 1. Создай Telegram-бота через [@BotFather](https://t.me/BotFather)

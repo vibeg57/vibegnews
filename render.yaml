@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: vibeg-bot
+    name: vibegnewsbot
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
