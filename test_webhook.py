@@ -1,20 +1,24 @@
-from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 
-menu_keyboard = [
-    [KeyboardButton('Тест 1'), KeyboardButton('Тест 2')],
-    [KeyboardButton('Тест 3')]
-]
-menu_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
+# Укажи свои данные:
+WEBHOOK_URL = "https://vibegnews.onrender.com/webhook/chat"
+WEBHOOK_PASSWORD = "ВАШ_ПАРОЛЬ"    # замени на фактический пароль
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"Получена команда /start от пользователя {update.effective_user.id}")
-    await update.message.reply_text("Выберите кнопку:", reply_markup=menu_markup)
+payload = {
+    "prompt": "Привет, GPT!",
+    "password": WEBHOOK_PASSWORD   # если пароль надо передавать в теле запроса
+}
+headers = {
+    "Content-Type": "application/json"
+    # Если пароль требуется в заголовке, раскомментируй и подправь нужную строку:
+    # "Authorization": f"Bearer {WEBHOOK_PASSWORD}",
+    # "X-Webhook-Password": WEBHOOK_PASSWORD
+}
 
-def main():
-    app = ApplicationBuilder().token("7944320544:AAESvvcWqGi7kaPlRbON3WwAq_WMsjEcH3Y").build()
-    app.add_handler(CommandHandler("start", start))
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
+try:
+    response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=15)
+    print("Статус:", response.status_code)
+    print("Ответ:")
+    print(response.text)
+except Exception as e:
+    print("Ошибка запроса:", e)
