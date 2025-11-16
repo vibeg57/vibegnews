@@ -1,15 +1,13 @@
 from fastapi import FastAPI, Request
+from fastapi.responses import Response
 import requests
 
 app = FastAPI()
 
-# Вставь свой Telegram API токен сюда!
 TELEGRAM_TOKEN = "7944320544:AAESvvcWqGi7kaPlRbON3WwAq_WMsjEcH3Y"
 BOT_NAME = "vibegbot"
-
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-# Главное меню (только при командах)
 MAIN_MENU = [
     ["История", "Домоводство"],
     ["IT для «чайников»", "FAQ"],
@@ -17,7 +15,12 @@ MAIN_MENU = [
 ]
 
 def send_message(chat_id, text, buttons=None, remove_keyboard=False):
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
     if buttons:
         payload["reply_markup"] = {"keyboard": buttons, "resize_keyboard": True}
     elif remove_keyboard:
@@ -27,9 +30,12 @@ def send_message(chat_id, text, buttons=None, remove_keyboard=False):
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
+    # Для отладки: print приходящих апдейтов из Telegram
+    print("UPDATE FROM TG:", data)
 
     if "message" not in data:
-        return {"ok": True}
+        # Telegram ждёт пустой ответ со статусом 200
+        return Response(content="", status_code=200)
 
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text", "")
@@ -110,4 +116,5 @@ async def webhook(request: Request):
             f"Я бот {BOT_NAME}. Пожалуйста, выбери раздел из меню или отправь команду /start для возврата меню."
         )
 
-    return {"ok": True}
+    # КОРРЕКТНЫЙ ОТВЕТ для Telegram!
+    return Response(content="", status_code=200)

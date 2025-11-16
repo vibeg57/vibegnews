@@ -1,17 +1,90 @@
-# Игнорировать виртуальное окружение
+# === Игнорирование виртуальных окружений ===
 venv/
+Pethon3.11/
 
-# Игнорировать файлы Python bytecode
+# === Игнорирование файлов Python bytecode ===
 __pycache__/
 *.py[cod]
 
-# Игнорировать настройки IDE (пример для VSCode)
+# === Игнорирование настроек IDE ===
+# === Игнорирование IDE и редакторов ===
+# VSCode
 .vscode/
+# PyCharm
+.idea/
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
 
-# Игнорировать файлы логов и баз данных
+# === Игнорирование логов, баз данных и конфигураций ===
 *.log
 *.sqlite3
+.env
 
-# Игнорировать системные файлы
+# === Игнорирование системных файлов ===
+# macOS
 .DS_Store
+# Windows
 Thumbs.db
+AppData/
+Application Data/
+NTUSER.DAT
+*.regtrans-ms
+*.blf
+Desktop.ini
+
+# === Игнорирование временных файлов и кэша ===
+.cache/
+node_modules/
+dist/
+build/
+__pycache__/
+*.py[cod]
+.temp/
+
+# === Игнорирование браузерных данных ===
+**/Chrome/User Data/
+**/Service Worker/
+**/CacheStorage/
+**/Session Storage/
+**/Web Applications/
+
+# === Игнорирование скомпилированных и бинарных файлов ===
+*.exe
+*.dll
+*.so
+*.o
+*.a
+
+# === Игнорирование архивов ===
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.tgz
+
+# === Игнорирование других временных файлов ===
+# Файлы редакторов
+*~
+.*.swp
+*.tmp
+
+# === Игнорирование медиафайлов (если они не нужны в проекте) ===
+*.mp4
+*.mp3
+*.wav
+*.flac
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# === Игнорирование специфичных для проекта файлов ===
+# Если есть специфичные файлы или папки, которые не нужно отслеживать
+Procfile
+ngrok.yml
+package-lock.json
+package.json
+projects/
+telegram-webhook-bot/
+test_requests.py
+vibegnews/
