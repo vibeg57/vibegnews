@@ -2,7 +2,7 @@ import requests
 
 # Укажи свои данные:
 WEBHOOK_URL = "https://vibegnews.onrender.com/webhook/chat"
-WEBHOOK_PASSWORD = "ВАШ_ПАРОЛЬ"    # замени на фактический пароль
+WEBHOOK_PASSWORD = "my_super_secret_key_195250"    # замени на фактический пароль
 
 payload = {
     "prompt": "Привет, GPT!",
@@ -22,3 +22,4 @@ try:
     print(response.text)
 except Exception as e:
     print("Ошибка запроса:", e)
+
