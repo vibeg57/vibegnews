@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-TELEGRAM_TOKEN = "..." # твой токен
+TELEGRAM_TOKEN = "..."  # сюда твой реальный токен!
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 menu = {
@@ -17,8 +17,8 @@ menu = {
 MAIN_MENU = [[k for k in menu.keys()]]
 
 def reply(chat_id, text):
-    # отправка сообщения с видимым меню
-    requests.post(
+    # отправка сообщения с видимым меню + лог ответа Telegram
+    response = requests.post(
         f"{BASE_URL}/sendMessage",
         json={
             "chat_id": chat_id,
@@ -26,6 +26,8 @@ def reply(chat_id, text):
             "reply_markup": {"keyboard": MAIN_MENU, "resize_keyboard": True}
         }
     )
+    # В логах Render увидишь: SEND: 200 {...} или ошибку с объяснением!
+    print('SEND:', response.status_code, response.text)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -48,5 +50,4 @@ def webhook():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-
 
