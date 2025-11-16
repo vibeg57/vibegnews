@@ -4,7 +4,7 @@ import requests
 app = Flask(__name__)
 
 # Вставь сюда свой реальный токен Telegram!
-TELEGRAM_TOKEN = "ТВОЙ_ТОКЕН"
+TELEGRAM_TOKEN = "7944320544:AAESvvcWqGi7kaPlRbON3WwAq_WMsjEcH3Y"
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 menu = {
@@ -47,5 +47,6 @@ def webhook():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
 
