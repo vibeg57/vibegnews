@@ -1,9 +1,10 @@
 from flask import Flask, request
 import requests
+import os
 
 app = Flask(__name__)
 
-# Вставь сюда свой реальный токен Telegram!
+# Здесь вставляй свой реальный токен Telegram!
 TELEGRAM_TOKEN = "7944320544:AAESvvcWqGi7kaPlRbON3WwAq_WMsjEcH3Y"
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
@@ -21,9 +22,11 @@ MAIN_MENU = [[k for k in menu.keys()]]
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
+    print(data) # <-- debug: логируем полученное от Telegram!
+
     message = data.get('message', {})
     chat_id = message.get('chat', {}).get('id')
-    user_message = message.get('text', '').strip()
+    user_message = message.get('text', '').strip() if 'text' in message else ''
 
     # Чтобы бот реагировал только на команды/кнопки:
     if user_message in menu:
@@ -46,7 +49,6 @@ def webhook():
     return "ok"
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-
-
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
 
