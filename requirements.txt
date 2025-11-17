@@ -1,7 +1,7 @@
-fastapi==0.95.2
-uvicorn==0.23.2
-python-telegram-bot==20.6
-transformers==4.36.2
-torch==2.1.0
+fastapi>=0.121.2
+uvicorn>=0.23.2
+python-telegram-bot>=22.5
+transformers>=4.36.2
+torch>=2.1.0
 
 
