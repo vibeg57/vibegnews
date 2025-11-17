@@ -2,7 +2,6 @@ import os
 import requests
 from datetime import datetime
 from collections import defaultdict
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -14,7 +13,7 @@ MESSAGE_LIMIT_PER_DAY = 20
 
 # --- Лимиты и игнор-лист ---
 user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
-ignore_list = set()  # Добавляй user_id если кого надо игнорить
+ignore_list = set()
 
 # --- Главное меню ---
 menu_keyboard = [
@@ -27,7 +26,6 @@ menu_markup = {
     "resize_keyboard": True
 }
 
-# --- GPTBots.ai ---
 def gptbots_generate(text, user_id):
     endpoint = "https://openapi.gptbots.ai/v1/chat"
     headers = {
@@ -51,7 +49,6 @@ def gptbots_generate(text, user_id):
     except Exception as e:
         return f"Ошибка запроса к GPTBots: {e}"
 
-# --- Лимиты ---
 def check_limit(user_id):
     today = datetime.utcnow().date()
     record = user_message_count[user_id]
@@ -70,7 +67,6 @@ def increment_limit(user_id):
     else:
         record["count"] += 1
 
-# --- Telegram send_message ---
 def send_message(chat_id, text, reply_markup=menu_markup):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {
@@ -102,7 +98,6 @@ def send_inline(chat_id, text, button_text, button_url):
     except Exception as e:
         print(f"Failed to send message: {e}")
 
-# --- FastAPI app ---
 app = FastAPI()
 
 @app.post("/webhook")
@@ -116,17 +111,14 @@ async def webhook(request: Request):
     if not chat_id or not user_id:
         return JSONResponse({"ok": True})
 
-    # Игнор-лист
     if user_id in ignore_list:
         return JSONResponse({"ok": True})
 
-    # Лимит сообщений
     if not check_limit(user_id):
         send_message(chat_id, f"Достигнут лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений на сегодня. Попробуйте завтра!")
         return JSONResponse({"ok": True})
     increment_limit(user_id)
 
-    # Обработка меню и диалога
     try:
         if text == "/start":
             send_message(
@@ -142,7 +134,7 @@ async def webhook(request: Request):
             )
             send_message(
                 chat_id,
-                "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, прочитать или прослушать книги о Лазурном.",
+                "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, прочитать или прослушать книги о Лазурном."
             )
         elif text == "Домоводство":
             send_message(
@@ -175,11 +167,12 @@ async def webhook(request: Request):
                 "https://vibegnews.tilda.ws/"
             )
         else:
-            # GPTBots диалог
             response = gptbots_generate(text, user_id)
             send_message(chat_id, response)
     except Exception as e:
         print(f"Ошибка при обработке сообщения: {e}")
 
     return JSONResponse({"ok": True})
+
+
 
