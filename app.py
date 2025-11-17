@@ -1,7 +1,12 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import os
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Создаем FastAPI приложение
 app = FastAPI()
@@ -24,22 +29,31 @@ bot_app.add_handler(CommandHandler("start", start))
 # Маршрут для вебхука
 @app.post("/webhook")
 async def webhook(request: Request):
-    # Получаем данные от Telegram
-    data = await request.json()
-    update = Update.de_json(data, bot_app.bot)
-    
-    # Обрабатываем обновление
-    await bot_app.process_update(update)
-    return {"status": "ok"}
+    try:
+        # Получаем данные от Telegram
+        data = await request.json()
+        logger.info(f"Received update: {data}")
+        
+        # Преобразуем данные в объект Update
+        update = Update.de_json(data, bot_app.bot)
+        
+        # Обрабатываем обновление
+        await bot_app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 # Метод для регистрации вебхука
 @app.on_event("startup")
 async def set_webhook():
     # URL вашего сервера
-    webhook_url = "https://your-domain.com/webhook"
+    webhook_url = "https://vibegnews.onrender.com/webhook"  # Замените на ваш реальный URL
+    logger.info(f"Setting webhook to {webhook_url}")
     await bot_app.bot.set_webhook(url=webhook_url)
 
 # Метод для удаления вебхука (опционально)
 @app.on_event("shutdown")
 async def unset_webhook():
+    logger.info("Removing webhook")
     await bot_app.bot.delete_webhook()
