@@ -14,18 +14,17 @@ logging.basicConfig(level=logging.INFO)
 # Инициализация FastAPI
 app = FastAPI()
 
+# Получение ключей и лимитов из env-переменных — для гибкости (fallback — прежние значения)
+GPTBOTS_API_URL = os.getenv("GPTBOTS_API_URL", "https://api.gptbots.ai/v1/generate")
+GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN_LIMIT_PER_USER = int(os.getenv("TOKEN_LIMIT_PER_USER", 20))
+
 # Глобальные переменные
-TOKEN_LIMIT_PER_USER = 20  # Ограничение токенов на пользователя
-user_token_usage = {}  # Словарь для отслеживания использования токенов
-user_last_reset_time = {}  # Словарь для отслеживания времени последнего сброса
-user_statistics = {}  # Словарь для сбора статистики
+user_token_usage = {}         # Следим за использованием токенов
+user_last_reset_time = {}     # Следим за временем последнего сброса
+user_statistics = {}          # Сохраняем статистику
 
-# Конфигурация для GPTBots API
-GPTBOTS_API_URL = "https://api.gptbots.ai/v1/generate"
-GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")  # Загрузка ключа из переменных окружения
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Загрузка токена Telegram
-
-# Функция для отправки сообщений в Telegram
 def send_message(chat_id, text, menu=True):
     reply_markup = {
         "keyboard": [["/start", "/menu"], ["Статистика"]],
@@ -35,15 +34,18 @@ def send_message(chat_id, text, menu=True):
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "reply_markup": reply_markup
+        "text": text
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     response = requests.post(telegram_url, json=payload)
     if response.status_code != 200:
         logging.error(f"Failed to send message: {response.text}")
 
-# Функция для генерации ответов через GPTBots API
 def generate_response(prompt, user_id):
+    if GPTBOTS_API_KEY is None:
+        logging.error("GPTBOTS_API_KEY is not set.")
+        return "Ошибка: не задан ключ GPTBOTS API."
     try:
         headers = {
             "Authorization": f"Bearer {GPTBOTS_API_KEY}",
@@ -51,13 +53,12 @@ def generate_response(prompt, user_id):
         }
         payload = {
             "prompt": prompt,
-            "max_tokens": TOKEN_LIMIT_PER_USER - user_token_usage.get(user_id, 0)  # Оставшиеся токены
+            "max_tokens": TOKEN_LIMIT_PER_USER - user_token_usage.get(user_id, 0)
         }
         response = requests.post(GPTBOTS_API_URL, headers=headers, json=payload)
         if response.status_code == 200:
             result = response.json()
-            generated_text = result.get("response", "Извините, произошла ошибка.")
-            return generated_text
+            return result.get("response", "Извините, произошла ошибка.")
         else:
             logging.error(f"GPTBots API error: {response.text}")
             return "Ошибка при генерации ответа."
@@ -65,83 +66,56 @@ def generate_response(prompt, user_id):
         logging.error(f"Error generating response: {e}")
         return "Произошла ошибка при обработке запроса."
 
-# Функция для сброса лимита токенов раз в день
 def reset_token_limit(user_id):
     current_time = datetime.now()
-    last_reset_time = user_last_reset_time.get(user_id, current_time - timedelta(days=1))  # Если первый раз, то сбрасываем сразу
-
-    if current_time - last_reset_time > timedelta(days=1):
+    last_reset = user_last_reset_time.get(user_id, current_time - timedelta(days=1))
+    if current_time - last_reset > timedelta(days=1):
         user_token_usage[user_id] = 0
         user_last_reset_time[user_id] = current_time
         logging.info(f"Token limit reset for user {user_id}.")
 
-# Функция для обновления статистики
 def update_statistics(user_id, message_text):
     if user_id not in user_statistics:
         user_statistics[user_id] = {"messages_count": 0, "last_interaction": None}
-    
     user_statistics[user_id]["messages_count"] += 1
     user_statistics[user_id]["last_interaction"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Обработчик входящих сообщений
 @app.post("/webhook")
 async def webhook_handler(request: Request):
     try:
         data = await request.json()
         logging.info(f"Received data: {data}")
 
-        # Проверка наличия ключа "message" в данных
         if "message" in data:
             chat_id = data["message"]["chat"]["id"]
             user_id = data["message"]["from"]["id"]
             text = data["message"].get("text", "").lower()
 
-            # Обновление статистики
             update_statistics(user_id, text)
 
-            # Проверка команды /start
             if text == "/start":
-                response_text = "Добро пожаловать! Выберите действие из меню."
-                send_message(chat_id, response_text)
+                send_message(chat_id, "Добро пожаловать! Выберите действие из меню.")
                 return {"ok": True}
-
-            # Проверка команды /menu
             if text == "/menu":
-                response_text = "Меню доступно ниже."
-                send_message(chat_id, response_text)
+                send_message(chat_id, "Меню доступно ниже.")
                 return {"ok": True}
-
-            # Проверка команды "Статистика"
             if text == "статистика":
                 stats = user_statistics.get(user_id, {"messages_count": 0, "last_interaction": "Нет данных"})
-                response_text = (
-                    f"Ваша статистика:\n"
-                    f"- Количество сообщений: {stats['messages_count']}\n"
-                    f"- Последнее взаимодействие: {stats['last_interaction']}"
+                send_message(
+                    chat_id,
+                    f"Ваша статистика:\n- Количество сообщений: {stats['messages_count']}\n- Последнее взаимодействие: {stats['last_interaction']}"
                 )
-                send_message(chat_id, response_text)
                 return {"ok": True}
-
-            # Сброс лимита токенов
+            
             reset_token_limit(user_id)
-
-            # Проверка лимита токенов
-            if user_id not in user_token_usage:
-                user_token_usage[user_id] = 0  # Инициализация счетчика токенов
-
+            user_token_usage.setdefault(user_id, 0)
             if user_token_usage[user_id] >= TOKEN_LIMIT_PER_USER:
-                response_text = "Вы достигли лимита токенов. Попробуйте позже."
-                send_message(chat_id, response_text)
+                send_message(chat_id, "Вы достигли лимита токенов. Попробуйте позже.")
                 return {"ok": True}
 
-            # Генерация ответа через GPTBots
             response_text = generate_response(text, user_id)
-
-            # Обновление счетчика токенов
-            tokens_used = len(response_text.split())  # Примерный подсчет токенов
+            tokens_used = len(response_text.split())
             user_token_usage[user_id] += tokens_used
-
-            # Отправка ответа
             send_message(chat_id, response_text)
             return {"ok": True}
 
