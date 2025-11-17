@@ -18,7 +18,8 @@ __pycache__/
 *.log
 *.sqlite3
 .env
-
+# .gitignore
+.env
 # === Игнорирование системных файлов ===
 # macOS
 .DS_Store
@@ -80,3 +81,4 @@ Desktop.ini
 *.jpeg
 *.png
 *.gif
+
