@@ -2,6 +2,11 @@ from fastapi import FastAPI, Request
 import requests
 import logging
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import os
+
+# Загрузка переменных из .env
+load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -17,8 +22,8 @@ user_statistics = {}  # Словарь для сбора статистики
 
 # Конфигурация для GPTBots API
 GPTBOTS_API_URL = "https://api.gptbots.ai/v1/generate"
-GPTBOTS_API_KEY = "YOUR_GPTBOTS_API_KEY"  # Замените на ваш API-ключ
-TELEGRAM_BOT_TOKEN = "<YOUR_TELEGRAM_BOT_TOKEN>"  # Замените на ваш Telegram Bot Token
+GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")  # Загрузка ключа из переменных окружения
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Загрузка токена Telegram
 
 # Функция для отправки сообщений в Telegram
 def send_message(chat_id, text, menu=True):
@@ -83,9 +88,10 @@ def update_statistics(user_id, message_text):
 async def webhook_handler(request: Request):
     try:
         data = await request.json()
-        logging.info(f"Received  {data}")
+        logging.info(f"Received data: {data}")
 
-        if "message" in 
+        # Проверка наличия ключа "message" в данных
+        if "message" in data:
             chat_id = data["message"]["chat"]["id"]
             user_id = data["message"]["from"]["id"]
             text = data["message"].get("text", "").lower()
