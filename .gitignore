@@ -1,12 +1,4 @@
-# === Игнорирование виртуальных окружений ===
-venv/
-Pethon3.11/
-
-# === Игнорирование файлов Python bytecode ===
-__pycache__/
-*.py[cod]
-
-# === Игнорирование настроек IDE ===
+# === Игнорирование IDE и редакторов ===
 # VSCode
 .vscode/
 # PyCharm
@@ -18,8 +10,7 @@ __pycache__/
 *.log
 *.sqlite3
 .env
-# .gitignore
-.env
+
 # === Игнорирование системных файлов ===
 # macOS
 .DS_Store
@@ -30,13 +21,15 @@ Application Data/
 NTUSER.DAT
 *.regtrans-ms
 *.blf
+Desktop.ini
 
 # === Игнорирование временных файлов и кэша ===
 .cache/
 node_modules/
 dist/
 build/
-.pycache/
+__pycache__/
+*.py[cod]
 .temp/
 
 # === Игнорирование браузерных данных ===
@@ -66,12 +59,6 @@ build/
 .*.swp
 *.tmp
 
-# === Игнорирование файлов, созданных операционной системой ===
-# Windows
-Desktop.ini
-# Linux
-*~
-
 # === Игнорирование медиафайлов (если они не нужны в проекте) ===
 *.mp4
 *.mp3
@@ -82,3 +69,13 @@ Desktop.ini
 *.png
 *.gif
 
+# === Игнорирование специфичных для проекта файлов ===
+# Если есть специфичные файлы или папки, которые не нужно отслеживать
+Procfile
+ngrok.yml
+package-lock.json
+package.json
+projects/
+telegram-webhook-bot/
+test_requests.py
+vibegnews/
