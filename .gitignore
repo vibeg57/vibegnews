@@ -1,0 +1,52 @@
+# Игнорировать виртуальное окружение
+venv/
+Pethon3.11/
+
+# Игнорировать файлы Python bytecode
+__pycache__/
+*.py[cod]
+
+# Игнорировать настройки IDE (пример для VSCode)
+.vscode/
+
+# Игнорировать файлы логов и баз данных
+*.log
+*.sqlite3
+
+# Игнорировать системные файлы
+.DS_Store
+Thumbs.db
+
+# Игнорировать файлы конфигурации
+.env
+
+# Игнорировать системные папки Windows
+AppData/
+Application Data/
+NTUSER.DAT
+*.regtrans-ms
+*.blf
+
+# Игнорировать временные файлы и кэш
+.cache/
+node_modules/
+dist/
+build/
+
+# Игнорировать файлы, связанные с Chrome или другими браузерами
+**/Chrome/User Data/
+**/Service Worker/
+**/CacheStorage/
+**/Session Storage/
+**/Web Applications/
+
+# Игнорировать скомпилированные файлы
+*.exe
+*.dll
+*.so
+*.o
+
+# Игнорировать архивы
+*.zip
+*.rar
+*.7z
