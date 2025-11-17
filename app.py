@@ -1,125 +1,188 @@
-from fastapi import FastAPI, Request
-import requests
-import logging
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
 import os
+import requests
+from datetime import datetime
+from collections import defaultdict
 
-# Загрузка переменных из .env
-load_dotenv()
+from telegram import ReplyKeyboardMarkup, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.error import Forbidden
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+# --- Переменные окружения ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")  # Получи на gptbots.ai
+GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")  # Получи на gptbots.ai
 
-# Инициализация FastAPI
-app = FastAPI()
+# --- Лимит сообщений и игнор-лист ---
+MESSAGE_LIMIT_PER_DAY = 20
+user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
+ignore_list = set()  # Добавляй user_id которых игнорировать
 
-# Получение ключей и лимитов из env-переменных — для гибкости (fallback — прежние значения)
-GPTBOTS_API_URL = os.getenv("GPTBOTS_API_URL", "https://api.gptbots.ai/v1/generate")
-GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TOKEN_LIMIT_PER_USER = int(os.getenv("TOKEN_LIMIT_PER_USER", 20))
+# --- Главное меню ---
+menu_keyboard = [
+    ["История", "Домоводство"],
+    ["IT для \"чайников\"", "FAQ"],
+    ["О боте"]
+]
+menu_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
 
-# Глобальные переменные
-user_token_usage = {}         # Следим за использованием токенов
-user_last_reset_time = {}     # Следим за временем последнего сброса
-user_statistics = {}          # Сохраняем статистику
-
-def send_message(chat_id, text, menu=True):
-    reply_markup = {
-        "keyboard": [["/start", "/menu"], ["Статистика"]],
-        "resize_keyboard": True,
-        "one_time_keyboard": False
-    } if menu else None
-    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text
+# --- Генерация ответа через GPTBots.ai ---
+def gptbots_generate(text, user_id):
+    endpoint = "https://openapi.gptbots.ai/v1/chat"
+    headers = {
+        "X-API-Key": GPTBOTS_API_KEY,
+        "Content-Type": "application/json"
     }
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    response = requests.post(telegram_url, json=payload)
-    if response.status_code != 200:
-        logging.error(f"Failed to send message: {response.text}")
-
-def generate_response(prompt, user_id):
-    if GPTBOTS_API_KEY is None:
-        logging.error("GPTBOTS_API_KEY is not set.")
-        return "Ошибка: не задан ключ GPTBOTS API."
+    data = {
+        "agent_id": GPTBOTS_AGENT_ID,
+        "user_id": str(user_id),
+        "query": text
+    }
     try:
-        headers = {
-            "Authorization": f"Bearer {GPTBOTS_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "prompt": prompt,
-            "max_tokens": TOKEN_LIMIT_PER_USER - user_token_usage.get(user_id, 0)
-        }
-        response = requests.post(GPTBOTS_API_URL, headers=headers, json=payload)
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("response", "Извините, произошла ошибка.")
+        r = requests.post(endpoint, headers=headers, json=data, timeout=12)
+        if r.status_code == 200:
+            resp = r.json()
+            return resp.get('data', {}).get('reply', 'Сервис GPTBots не ответил.')
+        elif r.status_code == 429:  # лимит запросов
+            return "Лимит запросов GPTBots исчерпан, попробуйте позже."
         else:
-            logging.error(f"GPTBots API error: {response.text}")
-            return "Ошибка при генерации ответа."
+            return f"Ошибка GPTBots ({r.status_code}): {r.text}"
     except Exception as e:
-        logging.error(f"Error generating response: {e}")
-        return "Произошла ошибка при обработке запроса."
+        return f"Ошибка запроса к GPTBots: {e}"
 
-def reset_token_limit(user_id):
-    current_time = datetime.now()
-    last_reset = user_last_reset_time.get(user_id, current_time - timedelta(days=1))
-    if current_time - last_reset > timedelta(days=1):
-        user_token_usage[user_id] = 0
-        user_last_reset_time[user_id] = current_time
-        logging.info(f"Token limit reset for user {user_id}.")
+# --- Лимит сообщений ---
+def check_limit(user_id):
+    today = datetime.utcnow().date()
+    record = user_message_count[user_id]
+    if record["date"] != today:
+        user_message_count[user_id] = {"date": today, "count": 0}
+        return True
+    if record["count"] < MESSAGE_LIMIT_PER_DAY:
+        return True
+    return False
 
-def update_statistics(user_id, message_text):
-    if user_id not in user_statistics:
-        user_statistics[user_id] = {"messages_count": 0, "last_interaction": None}
-    user_statistics[user_id]["messages_count"] += 1
-    user_statistics[user_id]["last_interaction"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def increment_limit(user_id):
+    today = datetime.utcnow().date()
+    record = user_message_count[user_id]
+    if record["date"] != today:
+        user_message_count[user_id] = {"date": today, "count": 1}
+    else:
+        record["count"] += 1
 
-@app.post("/webhook")
-async def webhook_handler(request: Request):
+# --- Обработчик команды /start ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    print(f"Получена команда /start от пользователя {user_id}")
+    if user_id in ignore_list:
+        return
     try:
-        data = await request.json()
-        logging.info(f"Received data: {data}")
+        await update.message.reply_text(
+            "Привет! Я помощник сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/). Выберите раздел меню:",
+            reply_markup=menu_markup,
+            parse_mode="Markdown"
+        )
+    except Forbidden:
+        print(f"Пользователь {user_id} заблокировал бота, сообщение не отправлено.")
 
-        if "message" in data:
-            chat_id = data["message"]["chat"]["id"]
-            user_id = data["message"]["from"]["id"]
-            text = data["message"].get("text", "").lower()
+# --- Обработчик всех текстовых сообщений ---
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
 
-            update_statistics(user_id, text)
+    # Игнор-лист
+    if user_id in ignore_list:
+        print(f"Пользователь {user_id} в игнор-листе.")
+        return
 
-            if text == "/start":
-                send_message(chat_id, "Добро пожаловать! Выберите действие из меню.")
-                return {"ok": True}
-            if text == "/menu":
-                send_message(chat_id, "Меню доступно ниже.")
-                return {"ok": True}
-            if text == "статистика":
-                stats = user_statistics.get(user_id, {"messages_count": 0, "last_interaction": "Нет данных"})
-                send_message(
-                    chat_id,
-                    f"Ваша статистика:\n- Количество сообщений: {stats['messages_count']}\n- Последнее взаимодействие: {stats['last_interaction']}"
-                )
-                return {"ok": True}
-            
-            reset_token_limit(user_id)
-            user_token_usage.setdefault(user_id, 0)
-            if user_token_usage[user_id] >= TOKEN_LIMIT_PER_USER:
-                send_message(chat_id, "Вы достигли лимита токенов. Попробуйте позже.")
-                return {"ok": True}
+    # Лимит сообщений
+    if not check_limit(user_id):
+        await update.message.reply_text(
+            f"Достигнут лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений на сегодня. Попробуйте завтра!",
+            reply_markup=menu_markup
+        )
+        return
 
-            response_text = generate_response(text, user_id)
-            tokens_used = len(response_text.split())
-            user_token_usage[user_id] += tokens_used
-            send_message(chat_id, response_text)
-            return {"ok": True}
+    increment_limit(user_id)
 
-        return {"ok": False}
-    except Exception as e:
-        logging.error(f"Error processing request: {e}")
-        return {"ok": False}
+    try:
+        if text == "История":
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Подробнее на сайте", url="https://vibegnews.tilda.ws/")]
+            ])
+            await update.message.reply_text(
+                "Лазурное — уютный поселок на берегу Черного моря в Херсонской области. "
+                "Основан в 1803 году, известен своими пляжами и гостеприимством.", reply_markup=keyboard
+            )
+            await update.message.reply_text(
+                "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, "
+                "прочитать или прослушать книги о Лазурном.", parse_mode="Markdown"
+            )
+
+        elif text == "Домоводство":
+            await update.message.reply_text(
+                "В разделе *Домоводство* представлены практические советы по уюту и эффективности в доме, "
+                "рекомендации по экономии бюджета и виноградарству.",
+                parse_mode="Markdown"
+            )
+            await update.message.reply_text(
+                "*Например:*\n"
+                "- Календарь садовода\n"
+                "- Как быстро обменять деньги\n"
+                "- Как выбрать стабилизатор напряжения\n"
+                "- Можно ли бороться с растрескиванием ягод винограда",
+                parse_mode="Markdown"
+            )
+
+        elif text == "IT для \"чайников\"":
+            await update.message.reply_text(
+                "*IT для «чайников»:* Простые и понятные советы по работе с компьютером, смартфоном и интернетом.",
+                parse_mode="Markdown"
+            )
+            await update.message.reply_text(
+                "*Например:*\n"
+                "- Смартфон для пожилых\n"
+                "- Статьи по искусственному интеллекту и нейросетям\n"
+                "- Освоение компьютера",
+                parse_mode="Markdown"
+            )
+
+        elif text == "FAQ":
+            await update.message.reply_text(
+                "В чате вы можете получить ответы на часто задаваемые вопросы и воспользоваться помощью бота.",
+                parse_mode="Markdown"
+            )
+
+        elif text == "О боте":
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Перейти на сайт", url="https://vibegnews.tilda.ws/")]
+            ])
+            await update.message.reply_text(
+                "Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) "
+                "и даёт ответы по его темам и другим вопросам в своей компетенции.\n\n"
+                "*Основные возможности:*\n"
+                f"- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n"
+                "- Сброс лимита: раз в день.\n"
+                "- Ведение статистики использования.",
+                parse_mode="Markdown", reply_markup=keyboard
+            )
+
+        else:
+            # Свободный диалог через GPTBots.ai
+            response = gptbots_generate(text, user_id)
+            await update.message.reply_text(
+                response or "Произошла ошибка при обращении к ИИ.",
+                reply_markup=menu_markup
+            )
+
+    except Forbidden:
+        print(f"Пользователь {user_id} заблокировал бота, сообщение не отправлено.")
+
+# --- Запуск бота ---
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    print("Бот запущен. Ожидание сообщений...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
