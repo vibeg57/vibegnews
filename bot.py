@@ -2,20 +2,20 @@ import os
 import requests
 from datetime import datetime
 from collections import defaultdict
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-from telegram import ReplyKeyboardMarkup, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.error import Forbidden
+print("Запуск актуального app.py — версия 2.2")  # Для отладки
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")  # Получи на gptbots.ai
-GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")  # Получи на gptbots.ai
+GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
+GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
+MESSAGE_LIMIT_PER_DAY = 30  # Лимит сообщений
 
-# --- Лимит сообщений и игнор-лист ---
-MESSAGE_LIMIT_PER_DAY = 20
+# --- Лимиты и игнор-лист ---
 user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
-ignore_list = set()  # Добавляй user_id которых игнорировать
+ignore_list = set()
 
 # --- Главное меню ---
 menu_keyboard = [
@@ -23,11 +23,13 @@ menu_keyboard = [
     ["IT для \"чайников\"", "FAQ"],
     ["О боте"]
 ]
-menu_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
+menu_markup = {
+    "keyboard": menu_keyboard,
+    "resize_keyboard": True
+}
 
-# --- Генерация ответа через GPTBots.ai ---
 def gptbots_generate(text, user_id):
-    endpoint = "https://openapi.gptbots.ai/v1/chat"
+    endpoint = "https://openapi.gptbots.ai/v1/chat"  # Исправленный URL
     headers = {
         "X-API-Key": GPTBOTS_API_KEY,
         "Content-Type": "application/json"
@@ -42,14 +44,15 @@ def gptbots_generate(text, user_id):
         if r.status_code == 200:
             resp = r.json()
             return resp.get('data', {}).get('reply', 'Сервис GPTBots не ответил.')
-        elif r.status_code == 429:  # лимит запросов
+        elif r.status_code == 429:
             return "Лимит запросов GPTBots исчерпан, попробуйте позже."
         else:
             return f"Ошибка GPTBots ({r.status_code}): {r.text}"
-    except Exception as e:
-        return f"Ошибка запроса к GPTBots: {e}"
+    except requests.exceptions.RequestException as e:
+        # Логируем ошибку и возвращаем понятное сообщение
+        print(f"Ошибка запроса к GPTBots: {e}")
+        return "Не удалось связаться с сервисом GPTBots. Попробуйте позже."
 
-# --- Лимит сообщений ---
 def check_limit(user_id):
     today = datetime.utcnow().date()
     record = user_message_count[user_id]
@@ -68,121 +71,120 @@ def increment_limit(user_id):
     else:
         record["count"] += 1
 
-# --- Обработчик команды /start ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    print(f"Получена команда /start от пользователя {user_id}")
-    if user_id in ignore_list:
-        return
+def send_message(chat_id, text, reply_markup=menu_markup):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": reply_markup
+    }
     try:
-        await update.message.reply_text(
-            "Привет! Я помощник сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/). Выберите раздел меню:",
-            reply_markup=menu_markup,
-            parse_mode="Markdown"
-        )
-    except Forbidden:
-        print(f"Пользователь {user_id} заблокировал бота, сообщение не отправлено.")
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        print(f"Failed to send message: {e}")
 
-# --- Обработчик всех текстовых сообщений ---
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
+def send_inline(chat_id, text, button_text, button_url):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": button_text, "url": button_url}]
+        ]
+    }
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": reply_markup
+    }
+    try:
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        print(f"Failed to send message: {e}")
 
-    # Игнор-лист
+app = FastAPI()
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    data = await request.json()
+    print(f"Received data: {data}")  # Для отладки
+    message = data.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    user_id = message.get("from", {}).get("id")
+    text = message.get("text", "")
+
+    if not chat_id or not user_id:
+        return JSONResponse({"ok": True})
+
     if user_id in ignore_list:
-        print(f"Пользователь {user_id} в игнор-листе.")
-        return
+        return JSONResponse({"ok": True})
 
-    # Лимит сообщений
     if not check_limit(user_id):
-        await update.message.reply_text(
-            f"Достигнут лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений на сегодня. Попробуйте завтра!",
-            reply_markup=menu_markup
-        )
-        return
-
+        send_message(chat_id, f"Достигнут лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений на сегодня. Попробуйте завтра!")
+        return JSONResponse({"ok": True})
     increment_limit(user_id)
 
     try:
-        if text == "История":
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Подробнее на сайте", url="https://vibegnews.tilda.ws/")]
-            ])
-            await update.message.reply_text(
-                "Лазурное — уютный поселок на берегу Черного моря в Херсонской области. "
-                "Основан в 1803 году, известен своими пляжами и гостеприимством.", reply_markup=keyboard
+        if text == "/start":
+            send_message(
+                chat_id,
+                "Привет! Я помощник сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/). Выберите раздел меню:"
             )
-            await update.message.reply_text(
-                "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, "
-                "прочитать или прослушать книги о Лазурном.", parse_mode="Markdown"
+        elif text == "История":
+            send_inline(
+                chat_id,
+                "Лазурное — уютный поселок на берегу Чёрного моря в Херсонской области. Основан в 1803 году, известен пляжами и гостеприимством.",
+                "Подробнее на сайте",
+                "https://vibegnews.tilda.ws/"
             )
-
+            send_message(
+                chat_id,
+                "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, прочитать или прослушать книги о Лазурном."
+            )
         elif text == "Домоводство":
-            await update.message.reply_text(
-                "В разделе *Домоводство* представлены практические советы по уюту и эффективности в доме, "
-                "рекомендации по экономии бюджета и виноградарству.",
-                parse_mode="Markdown"
+            send_message(
+                chat_id,
+                "В разделе *Домоводство* представлены практические советы по уюту и эффективности в доме, рекомендации по экономии бюджета и виноградарству."
             )
-            await update.message.reply_text(
-                "*Например:*\n"
-                "- Календарь садовода\n"
-                "- Как быстро обменять деньги\n"
-                "- Как выбрать стабилизатор напряжения\n"
-                "- Можно ли бороться с растрескиванием ягод винограда",
-                parse_mode="Markdown"
+            send_message(
+                chat_id,
+                "*Например:*\n- Календарь садовода\n- Как быстро обменять деньги\n- Как выбрать стабилизатор напряжения\n- Можно ли бороться с растрескиванием ягод винограда"
             )
-
         elif text == "IT для \"чайников\"":
-            await update.message.reply_text(
-                "*IT для «чайников»:* Простые и понятные советы по работе с компьютером, смартфоном и интернетом.",
-                parse_mode="Markdown"
+            send_message(
+                chat_id,
+                "*IT для «чайников»:* Простые и понятные советы по работе с компьютером, смартфоном и интернетом."
             )
-            await update.message.reply_text(
-                "*Например:*\n"
-                "- Смартфон для пожилых\n"
-                "- Статьи по искусственному интеллекту и нейросетям\n"
-                "- Освоение компьютера",
-                parse_mode="Markdown"
+            send_message(
+                chat_id,
+                "*Например:*\n- Смартфон для пожилых\n- Статьи по искусственному интеллекту и нейросетям\n- Освоение компьютера"
             )
-
         elif text == "FAQ":
-            await update.message.reply_text(
-                "В чате вы можете получить ответы на часто задаваемые вопросы и воспользоваться помощью бота.",
-                parse_mode="Markdown"
+            send_message(
+                chat_id,
+                "В чате вы можете получить ответы на часто задаваемые вопросы и воспользоваться помощью бота."
             )
-
         elif text == "О боте":
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Перейти на сайт", url="https://vibegnews.tilda.ws/")]
-            ])
-            await update.message.reply_text(
-                "Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) "
-                "и даёт ответы по его темам и другим вопросам в своей компетенции.\n\n"
-                "*Основные возможности:*\n"
-                f"- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n"
-                "- Сброс лимита: раз в день.\n"
-                "- Ведение статистики использования.",
-                parse_mode="Markdown", reply_markup=keyboard
+            send_inline(
+                chat_id,
+                (
+                    "Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) и даёт ответы по его темам и другим вопросам.\n\n"
+                    "*Основные возможности:*\n"
+                    f"- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n"
+                    "- Сброс лимита: раз в день.\n"
+                    "- Ведение статистики использования для улучшения сервиса.\n\n"
+                    "*Конфиденциальность:*\n"
+                    "Все ваши данные и сообщения обрабатываются с соблюдением конфиденциальности и не передаются третьим лицам."
+                ),
+                "Перейти на сайт",
+                "https://vibegnews.tilda.ws/"
             )
-
         else:
-            # Свободный диалог через GPTBots.ai
+            # Свободный диалог с GPTBots
             response = gptbots_generate(text, user_id)
-            await update.message.reply_text(
-                response or "Произошла ошибка при обращении к ИИ.",
-                reply_markup=menu_markup
-            )
+            send_message(chat_id, response)
+    except Exception as e:
+        print(f"Ошибка при обработке сообщения: {e}")
 
-    except Forbidden:
-        print(f"Пользователь {user_id} заблокировал бота, сообщение не отправлено.")
+    return JSONResponse({"ok": True})
 
-# --- Запуск бота ---
-def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    print("Бот запущен. Ожидание сообщений...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
