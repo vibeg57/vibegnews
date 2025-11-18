@@ -5,13 +5,20 @@ from collections import defaultdict
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-print("Запуск актуального app.py — версия 2.2")  # Для отладки
+print("Запуск актуального app.py — версия 2.3")  # Для отладки
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
 MESSAGE_LIMIT_PER_DAY = 30  # Лимит сообщений
+
+if not TELEGRAM_TOKEN:
+    print("Внимание! TELEGRAM_BOT_TOKEN не задан.")
+if not GPTBOTS_API_KEY:
+    print("Внимание! GPTBOTS_API_KEY не задан.")
+if not GPTBOTS_AGENT_ID:
+    print("Внимание! GPTBOTS_AGENT_ID не задан.")
 
 # --- Лимиты и игнор-лист ---
 user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
@@ -29,7 +36,7 @@ menu_markup = {
 }
 
 def gptbots_generate(text, user_id):
-    endpoint = "https://openapi.gptbots.ai/v1/chat"  # Исправленный URL
+    endpoint = "https://openapi.gptbots.ai/v1/chat"
     headers = {
         "X-API-Key": GPTBOTS_API_KEY,
         "Content-Type": "application/json"
@@ -37,10 +44,14 @@ def gptbots_generate(text, user_id):
     data = {
         "agent_id": GPTBOTS_AGENT_ID,
         "user_id": str(user_id),
-        "query": text
+        "query": text,
+        # При необходимости можно добавить системное сообщение для роли агента:
+        # "system_prompt": "Вы — экспертный помощник по жизни в Лазурном..."
     }
     try:
         r = requests.post(endpoint, headers=headers, json=data, timeout=12)
+        print(f"GPTBots response status: {r.status_code}")
+        print(f"GPTBots response body: {r.text}")
         if r.status_code == 200:
             resp = r.json()
             return resp.get('data', {}).get('reply', 'Сервис GPTBots не ответил.')
@@ -49,7 +60,6 @@ def gptbots_generate(text, user_id):
         else:
             return f"Ошибка GPTBots ({r.status_code}): {r.text}"
     except requests.exceptions.RequestException as e:
-        # Логируем ошибку и возвращаем понятное сообщение
         print(f"Ошибка запроса к GPTBots: {e}")
         return "Не удалось связаться с сервисом GPTBots. Попробуйте позже."
 
@@ -187,4 +197,3 @@ async def webhook(request: Request):
         print(f"Ошибка при обработке сообщения: {e}")
 
     return JSONResponse({"ok": True})
-
