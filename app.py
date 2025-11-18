@@ -5,6 +5,8 @@ from collections import defaultdict
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+print("Запуск app.py — версия 2.0")  # Поможет убедиться, что запускается этот файл
+
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
@@ -103,6 +105,7 @@ app = FastAPI()
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
+    print(f"Received data: {data}")  # Логируем входящие данные для отладки
     message = data.get("message", {})
     chat_id = message.get("chat", {}).get("id")
     user_id = message.get("from", {}).get("id")
@@ -173,6 +176,8 @@ async def webhook(request: Request):
         print(f"Ошибка при обработке сообщения: {e}")
 
     return JSONResponse({"ok": True})
+
+
 
 
 
