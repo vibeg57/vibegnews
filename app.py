@@ -4,6 +4,7 @@ from datetime import datetime
 from collections import defaultdict
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+import json
 
 # Переменные окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -24,6 +25,14 @@ menu_markup = {
     "resize_keyboard": True
 }
 
+# Системное сообщение для GPTBots — роль и стиль агента
+SYSTEM_PROMPT = (
+    "Вы — экспертный помощник и гид по жизни в уникальном поселке Лазурное, Херсонской области. "
+    "Отвечайте понятно, дружелюбно и по существу. Избегайте сложных терминов, если не попросили. "
+    "Помогайте с вопросами по домоводству, IT для начинающих, истории поселка и локальным рекомендациям. "
+    "Если вопрос выходит за рамки — вежливо сообщайте об этом."
+)
+
 def gptbots_generate(text, user_id):
     endpoint = "https://openapi.gptbots.ai/v1/chat"
     headers = {
@@ -34,6 +43,7 @@ def gptbots_generate(text, user_id):
         "agent_id": GPTBOTS_AGENT_ID,
         "user_id": str(user_id),
         "query": text,
+        "system_prompt": SYSTEM_PROMPT
     }
     try:
         r = requests.post(endpoint, headers=headers, json=data, timeout=12)
@@ -69,7 +79,7 @@ def send_message(chat_id, text, reply_markup=menu_markup):
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "Markdown",
-        "reply_markup": reply_markup
+        "reply_markup": json.dumps(reply_markup)  # Telegram требует JSON-строку
     }
     try:
         requests.post(url, json=data, timeout=10)
@@ -87,7 +97,7 @@ def send_inline(chat_id, text, button_text, button_url):
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "Markdown",
-        "reply_markup": reply_markup
+        "reply_markup": json.dumps(reply_markup)
     }
     try:
         requests.post(url, json=data, timeout=10)
