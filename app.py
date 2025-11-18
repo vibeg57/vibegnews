@@ -5,13 +5,13 @@ from collections import defaultdict
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-print("Запуск актуального app.py — версия 2.1")  # Для отладки
+print("Запуск актуального app.py — версия 2.2")  # Для отладки
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
-MESSAGE_LIMIT_PER_DAY = 30  # Увеличенный лимит сообщений
+MESSAGE_LIMIT_PER_DAY = 30  # Лимит сообщений
 
 # --- Лимиты и игнор-лист ---
 user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
@@ -29,7 +29,7 @@ menu_markup = {
 }
 
 def gptbots_generate(text, user_id):
-    endpoint = "https://openapi.gptbots.ai/v1/chat"
+    endpoint = "https://openapi.gptbots.ai/v1/chat"  # Исправленный URL
     headers = {
         "X-API-Key": GPTBOTS_API_KEY,
         "Content-Type": "application/json"
@@ -48,8 +48,10 @@ def gptbots_generate(text, user_id):
             return "Лимит запросов GPTBots исчерпан, попробуйте позже."
         else:
             return f"Ошибка GPTBots ({r.status_code}): {r.text}"
-    except Exception as e:
-        return f"Ошибка запроса к GPTBots: {e}"
+    except requests.exceptions.RequestException as e:
+        # Логируем ошибку и возвращаем понятное сообщение
+        print(f"Ошибка запроса к GPTBots: {e}")
+        return "Не удалось связаться с сервисом GPTBots. Попробуйте позже."
 
 def check_limit(user_id):
     today = datetime.utcnow().date()
@@ -105,7 +107,7 @@ app = FastAPI()
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-    print(f"Received data: {data}")  # Логируем для отладки
+    print(f"Received data: {data}")  # Для отладки
     message = data.get("message", {})
     chat_id = message.get("chat", {}).get("id")
     user_id = message.get("from", {}).get("id")
@@ -178,10 +180,11 @@ async def webhook(request: Request):
                 "https://vibegnews.tilda.ws/"
             )
         else:
-            # Свободный диалог с генерацией ответа от GPTBots
+            # Свободный диалог с GPTBots
             response = gptbots_generate(text, user_id)
             send_message(chat_id, response)
     except Exception as e:
         print(f"Ошибка при обработке сообщения: {e}")
 
     return JSONResponse({"ok": True})
+
