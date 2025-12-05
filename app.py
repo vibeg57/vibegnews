@@ -49,7 +49,7 @@ SYSTEM_PROMPT = (
     "Если вопрос выходит за рамки — вежливо сообщайте об этом."
 )
 
-# Функция вызова GPTBots API с обработкой ошибок
+# Функция вызова GPTBots API с обработкой ошибок и заглушкой
 def gptbots_generate(text, user_id):
     url = "https://openapi.gptbots.ai/v1/chat/completions"
     headers = {
