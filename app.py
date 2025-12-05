@@ -22,19 +22,19 @@ logging.basicConfig(
     ]
 )
 
-logging.info("Запуск app.py — версия 3.0")
+logging.info("Запуск app.py — версия 3.1 (fix GPTBots endpoint)")
 
 # ---- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ----
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
 GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
+
 MESSAGE_LIMIT_PER_DAY = 30
+FLOOD_DELAY = 1.5  # секунды между запросами
 
 user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
 user_last_message_time = defaultdict(lambda: 0)
 ignore_list = set()
-
-FLOOD_DELAY = 1.5  # секунды между запросами
 
 menu_keyboard = [
     ["История", "Домоводство"],
@@ -52,11 +52,14 @@ SYSTEM_PROMPT = (
 
 # ---- GPTBOTS ----
 def gptbots_generate(text, user_id):
-    url = "https://openapi.gptbots.ai/v1/chat/completions"
+    # исправленный актуальный эндпоинт
+    url = "https://openapi.gptbots.ai/v1/chat"
+
     headers = {
         "Authorization": f"Bearer {GPTBOTS_API_KEY}",
         "Content-Type": "application/json"
     }
+
     payload = {
         "model": GPTBOTS_AGENT_ID,
         "user": str(user_id),
@@ -67,21 +70,27 @@ def gptbots_generate(text, user_id):
     }
 
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        r = requests.post(url, headers=headers, json=payload, timeout=20)
         logging.info(f"GPTBots статус: {r.status_code}")
         logging.info(f"GPTBots ответ: {r.text}")
 
         if r.status_code == 200:
             data = r.json()
             return data["choices"][0]["message"]["content"]
-        elif r.status_code == 429:
+
+        if r.status_code == 429:
             return "GPTBots: превышен лимит, попробуйте позже."
-        else:
-            return f"GPTBots ошибка {r.status_code}: {r.text}"
+
+        return f"GPTBots ошибка {r.status_code}: {r.text}"
+
+    except requests.exceptions.Timeout:
+        logging.error("GPTBots: timeout")
+        return "GPTBots не ответил вовремя. Попробуйте ещё раз."
 
     except Exception as e:
         logging.error(f"GPTBots EXCEPTION: {e}")
-        return f"Ошибка GPTBots: {e}"
+        return "Ошибка: сервис GPTBots временно недоступен."
+
 
 @lru_cache(maxsize=2000)
 def cache_answer(user_id, text):
@@ -176,22 +185,20 @@ async def webhook(request: Request):
             send_message(chat_id, "Привет! Я помощник сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/). Выберите раздел меню:")
         elif text == "История":
             send_inline(chat_id,
-                        "Лазурное — уютный поселок на берегу Чёрного моря в Херсонской области. Основан в 1803 году, известен пляжами и гостеприимством.",
+                        "Лазурное — уютный поселок на берегу Чёрного моря... основан в 1803 году.",
                         "Подробнее на сайте", "https://vibegnews.tilda.ws/")
-            send_message(chat_id, "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, прочитать или прослушать книги о Лазурном.")
+            send_message(chat_id, "В разделе *История* вы найдёте интересные материалы о Причерноморье.")
         elif text == "Домоводство":
-            send_message(chat_id, "В разделе *Домоводство* представлены практические советы по уюту и эффективности в доме, рекомендации по экономии бюджета и виноградарству.")
-            send_message(chat_id, "*Например:*\n- Календарь садовода\n- Как быстро обменять деньги\n- Как выбрать стабилизатор напряжения\n- Можно ли бороться с растрескиванием ягод винограда")
+            send_message(chat_id, "Советы по дому, саду, экономии бюджета и виноградарству.")
         elif text == "IT для \"чайников\"":
-            send_message(chat_id, "*IT для «чайников»:* Простые и понятные советы по работе с компьютером, смартфоном и интернетом.")
-            send_message(chat_id, "*Например:*\n- Смартфон для пожилых\n- Статьи по искусственному интеллекту и нейросетям\n- Освоение компьютера")
+            send_message(chat_id, "Пошаговые инструкции по компьютеру, смартфону и интернету.")
         elif text == "FAQ":
-            send_message(chat_id, "В чате вы можете получить ответы на часто задаваемые вопросы и воспользоваться помощью бота.")
+            send_message(chat_id, "Часто задаваемые вопросы и помощь бота.")
         elif text == "О боте":
             send_inline(chat_id,
-                        ("Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) и даёт ответы по его темам и другим вопросам.\n\n"
-                         f"*Основные возможности:*\n- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n- Сброс лимита: раз в день.\n- Ведение статистики использования для улучшения сервиса.\n\n"
-                         "*Конфиденциальность:*\nВсе ваши данные и сообщения обрабатываются с соблюдением конфиденциальности и не передаются третьим лицам."),
+                        ("Этот бот — помощник сайта vibegnews.tilda.ws.\n\n"
+                         f"*Лимит:* {MESSAGE_LIMIT_PER_DAY} сообщений в день.\n"
+                         "Сброс — каждый день."),
                         "Перейти на сайт", "https://vibegnews.tilda.ws/")
         else:
             reply = cache_answer(user_id, text)
