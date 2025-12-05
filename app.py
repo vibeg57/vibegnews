@@ -5,101 +5,102 @@ import time
 import logging
 from datetime import datetime
 from collections import defaultdict
+from functools import lru_cache
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-# ---------------- ЛОГИРОВАНИЕ ----------------
+# Логирование
+LOG_FILE = "logs/app.log"
 os.makedirs("logs", exist_ok=True)
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s — %(levelname)s — %(message)s",
     handlers=[
-        logging.FileHandler("logs/app.log", encoding="utf-8"),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
+logging.info("Запуск app.py — версия 3.0")
 
-logging.info("Запуск app.py — версия DeepSeek 1.0")
-
-# ---------------- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ----------------
+# Переменные окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-
+GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
+GPTBOTS_AGENT_ID = os.getenv("GPTBOTS_AGENT_ID")
 MESSAGE_LIMIT_PER_DAY = 30
-FLOOD_DELAY = 1.5
 
-user_last_message_time = defaultdict(lambda: 0)
 user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
+user_last_message_time = defaultdict(lambda: 0)
+ignore_list = set()
 
-# ---------------- ТЕЛЕГРАМ МЕНЮ ----------------
+FLOOD_DELAY = 1.5  # секунды между запросами
+
 menu_keyboard = [
     ["История", "Домоводство"],
     ["IT для \"чайников\"", "FAQ"],
     ["О боте"]
 ]
-
 menu_markup = {"keyboard": menu_keyboard, "resize_keyboard": True}
 
-# ---------------- SYSTEM PROMPT ----------------
 SYSTEM_PROMPT = (
-    "Вы — экспертный помощник сайта vibegnews.tilda.ws. "
-    "Отвечайте понятно, полезно и дружелюбно. "
-    "Если вопрос выходит за рамки сайта, всё равно помогайте, но кратко и по делу."
+    "Вы — экспертный помощник и гид по жизни в уникальном поселке Лазурное, Херсонской области. "
+    "Отвечайте понятно, дружелюбно и по существу. Избегайте сложных терминов, если не попросили. "
+    "Помогайте с вопросами по домоводству, IT для начинающих, истории поселка и локальным рекомендациям. "
+    "Если вопрос выходит за рамки — вежливо сообщайте об этом."
 )
 
-# ---------------- ЗАПРОС К DEEPSEEK ----------------
-def ask_deepseek(user_text):
-    url = "https://api.deepseek.com/v1/chat/completions"
+# Функция вызова GPTBots API
+def gptbots_generate(text, user_id):
+    url = "https://openapi.gptbots.ai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Authorization": f"Bearer {GPTBOTS_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": GPTBOTS_AGENT_ID,
+        "user": str(user_id),
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_text}
+            {"role": "user", "content": text}
         ]
     }
-
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=20)
-        logging.info(f"DeepSeek статус: {r.status_code}")
+        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        logging.info(f"GPTBots статус: {r.status_code}")
+        logging.info(f"GPTBots ответ: {r.text}")
 
         if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"]
-
-        return f"DeepSeek ошибка {r.status_code}: {r.text}"
-
+            data = r.json()
+            return data["choices"][0]["message"]["content"]
+        elif r.status_code == 429:
+            return "GPTBots: превышен лимит, попробуйте позже."
+        else:
+            return f"GPTBots ошибка {r.status_code}: {r.text}"
     except Exception as e:
-        logging.error(f"DeepSeek EXCEPTION: {e}")
-        return "Ошибка обработки запроса к ИИ. Попробуйте позже."
+        logging.error(f"GPTBots EXCEPTION: {e}")
+        return f"Ошибка GPTBots: {e}"
 
+@lru_cache(maxsize=2000)
+def cache_answer(user_id, text):
+    return gptbots_generate(text, user_id)
 
-# ---------------- ОГРАНИЧЕНИЯ ----------------
+# Проверка лимитов
 def check_limit(user_id):
     today = datetime.utcnow().date()
     record = user_message_count[user_id]
-
     if record["date"] != today:
         user_message_count[user_id] = {"date": today, "count": 0}
         return True
-
     return record["count"] < MESSAGE_LIMIT_PER_DAY
-
 
 def increment_limit(user_id):
     today = datetime.utcnow().date()
     record = user_message_count[user_id]
-
     if record["date"] != today:
         user_message_count[user_id] = {"date": today, "count": 1}
     else:
         record["count"] += 1
 
-
-# ---------------- TELEGRAM SEND ----------------
+# Отправка сообщений Telegram
 def send_message(chat_id, text, reply_markup=menu_markup):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {
@@ -112,7 +113,6 @@ def send_message(chat_id, text, reply_markup=menu_markup):
         requests.post(url, json=data, timeout=10)
     except Exception as e:
         logging.error(f"Ошибка отправки сообщения: {e}")
-
 
 def send_inline(chat_id, text, button_text, button_url):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -128,17 +128,18 @@ def send_inline(chat_id, text, button_text, button_url):
     try:
         requests.post(url, json=data, timeout=10)
     except Exception as e:
-        logging.error(f"Ошибка inline-кнопки: {e}")
+        logging.error(f"Ошибка отправки inline сообщения: {e}")
 
-
-# ---------------- FASTAPI ----------------
+# FastAPI приложение
 app = FastAPI()
-
 
 @app.get("/")
 async def root():
-    return {"message": "DeepSeek бот запущен! Webhook работает."}
+    return {"message": "Бот работает. Отправляйте запросы на /webhook."}
 
+@app.head("/")
+async def root_head():
+    return Response(status_code=200)
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -153,58 +154,46 @@ async def webhook(request: Request):
     if not chat_id or not user_id:
         return JSONResponse({"ok": True})
 
-    # Антифлуд
     now = time.time()
     if now - user_last_message_time[user_id] < FLOOD_DELAY:
         return JSONResponse({"ok": True})
     user_last_message_time[user_id] = now
 
-    # Лимиты
-    if not check_limit(user_id):
-        send_message(chat_id, f"Вы использовали дневной лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений. Попробуйте завтра.")
+    if user_id in ignore_list:
         return JSONResponse({"ok": True})
 
+    if not check_limit(user_id):
+        send_message(chat_id, f"Достигнут лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений на сегодня. Попробуйте завтра!")
+        return JSONResponse({"ok": True})
     increment_limit(user_id)
 
-    # ---------------- Обработчики меню ----------------
     try:
         if text == "/start":
-            send_message(
-                chat_id,
-                "Привет! Я умный помощник vibegnews.tilda.ws.\n\nВыберите раздел меню:"
-            )
-            return JSONResponse({"ok": True})
-
-        if text == "История":
-            send_message(chat_id, "Раздел *История*: интересные факты о Лазурном и Причерноморье.")
-            return JSONResponse({"ok": True})
-
-        if text == "Домоводство":
-            send_message(chat_id, "Домоводство: советы по дому, саду, винограду, быту.")
-            return JSONResponse({"ok": True})
-
-        if text == "IT для \"чайников\"":
-            send_message(chat_id, "Простые советы по компьютерам, смартфонам и интернету.")
-            return JSONResponse({"ok": True})
-
-        if text == "FAQ":
-            send_message(chat_id, "Задайте вопрос — я постараюсь помочь.")
-            return JSONResponse({"ok": True})
-
-        if text == "О боте":
-            send_inline(
-                chat_id,
-                "Бот — помощник сайта vibegnews.tilda.ws.\nРаботает на DeepSeek.",
-                "Перейти на сайт",
-                "https://vibegnews.tilda.ws/"
-            )
-            return JSONResponse({"ok": True})
-
-        # ----------- Генерация ответа через DeepSeek -----------
-        reply = ask_deepseek(text)
-        send_message(chat_id, reply)
+            send_message(chat_id, "Привет! Я помощник сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/). Выберите раздел меню:")
+        elif text == "История":
+            send_inline(chat_id,
+                        "Лазурное — уютный поселок на берегу Чёрного моря в Херсонской области. Основан в 1803 году, известен пляжами и гостеприимством.",
+                        "Подробнее на сайте", "https://vibegnews.tilda.ws/")
+            send_message(chat_id, "В разделе *История* вы можете узнать интересные исторические факты Причерноморья, прочитать или прослушать книги о Лазурном.")
+        elif text == "Домоводство":
+            send_message(chat_id, "В разделе *Домоводство* представлены практические советы по уюту и эффективности в доме, рекомендации по экономии бюджета и виноградарству.")
+            send_message(chat_id, "*Например:*\n- Календарь садовода\n- Как быстро обменять деньги\n- Как выбрать стабилизатор напряжения\n- Можно ли бороться с растрескиванием ягод винограда")
+        elif text == "IT для \"чайников\"":
+            send_message(chat_id, "*IT для «чайников»:* Простые и понятные советы по работе с компьютером, смартфоном и интернетом.")
+            send_message(chat_id, "*Например:*\n- Смартфон для пожилых\n- Статьи по искусственному интеллекту и нейросетям\n- Освоение компьютера")
+        elif text == "FAQ":
+            send_message(chat_id, "В чате вы можете получить ответы на часто задаваемые вопросы и воспользоваться помощью бота.")
+        elif text == "О боте":
+            send_inline(chat_id,
+                        ("Бот является помощником сайта [vibegnews.tilda.ws](https://vibegnews.tilda.ws/) и даёт ответы по его темам и другим вопросам.\n\n"
+                         f"*Основные возможности:*\n- Лимит сообщений: {MESSAGE_LIMIT_PER_DAY} в сутки.\n- Сброс лимита: раз в день.\n- Ведение статистики использования для улучшения сервиса.\n\n"
+                         "*Конфиденциальность:*\nВсе ваши данные и сообщения обрабатываются с соблюдением конфиденциальности и не передаются третьим лицам."),
+                        "Перейти на сайт", "https://vibegnews.tilda.ws/")
+        else:
+            reply = cache_answer(user_id, text)
+            send_message(chat_id, reply)
 
     except Exception as e:
-        logging.error(f"Ошибка обработки: {e}")
+        logging.error(f"Ошибка обработки update: {e}")
 
     return JSONResponse({"ok": True})
