@@ -3,6 +3,7 @@ import requests
 import json
 import time
 import logging
+import socket
 from datetime import datetime
 from collections import defaultdict
 from functools import lru_cache
@@ -48,7 +49,7 @@ SYSTEM_PROMPT = (
     "Если вопрос выходит за рамки — вежливо сообщайте об этом."
 )
 
-# Функция вызова GPTBots API
+# Функция вызова GPTBots API с обработкой ошибок
 def gptbots_generate(text, user_id):
     url = "https://openapi.gptbots.ai/v1/chat/completions"
     headers = {
@@ -77,7 +78,8 @@ def gptbots_generate(text, user_id):
             return f"GPTBots ошибка {r.status_code}: {r.text}"
     except Exception as e:
         logging.error(f"GPTBots EXCEPTION: {e}")
-        return f"Ошибка GPTBots: {e}"
+        # Временная заглушка при ошибках подключения
+        return "Сервис GPTBots сейчас недоступен. Попробуйте позже."
 
 @lru_cache(maxsize=2000)
 def cache_answer(user_id, text):
@@ -140,6 +142,19 @@ async def root():
 @app.head("/")
 async def root_head():
     return Response(status_code=200)
+
+@app.get("/check-gptbots")
+async def check_gptbots():
+    try:
+        ip = socket.gethostbyname("openapi.gptbots.ai")
+    except Exception as e:
+        return {"dns_error": str(e)}
+
+    try:
+        r = requests.head("https://openapi.gptbots.ai", timeout=5)
+        return {"dns_ip": ip, "status_code": r.status_code}
+    except Exception as e:
+        return {"connection_error": str(e)}
 
 @app.post("/webhook")
 async def webhook(request: Request):
