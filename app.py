@@ -137,6 +137,10 @@ def send_inline(chat_id, text, button_text, button_url):
 # ---- FASTAPI ----
 app = FastAPI()
 
+@app.get("/")
+async def root():
+    return {"message": "Бот работает. Отправляйте запросы на /webhook."}
+
 @app.post("/webhook")
 async def webhook(request: Request):
     update = await request.json()
