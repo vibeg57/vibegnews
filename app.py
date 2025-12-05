@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from collections import defaultdict
 from functools import lru_cache
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 # ---- ЛОГИРОВАНИЕ ----
@@ -140,6 +140,10 @@ app = FastAPI()
 @app.get("/")
 async def root():
     return {"message": "Бот работает. Отправляйте запросы на /webhook."}
+
+@app.head("/")
+async def root_head():
+    return Response(status_code=200)
 
 @app.post("/webhook")
 async def webhook(request: Request):
