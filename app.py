@@ -1,151 +1,210 @@
-import logging
 import os
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+import requests
+import json
+import time
+import logging
+from datetime import datetime
+from collections import defaultdict
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
-API_TOKEN = os.getenv("BOT_TOKEN")
+# ---------------- ЛОГИРОВАНИЕ ----------------
+os.makedirs("logs", exist_ok=True)
 
-# ---- Logging ----
 logging.basicConfig(
     level=logging.INFO,
-    filename="logs/bot.log",
-    filemode="a",
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s — %(levelname)s — %(message)s",
+    handlers=[
+        logging.FileHandler("logs/app.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
 )
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+logging.info("Запуск app.py — версия DeepSeek 1.0")
+
+# ---------------- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ----------------
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+MESSAGE_LIMIT_PER_DAY = 30
+FLOOD_DELAY = 1.5
+
+user_last_message_time = defaultdict(lambda: 0)
+user_message_count = defaultdict(lambda: {"date": datetime.utcnow().date(), "count": 0})
+
+# ---------------- ТЕЛЕГРАМ МЕНЮ ----------------
+menu_keyboard = [
+    ["История", "Домоводство"],
+    ["IT для \"чайников\"", "FAQ"],
+    ["О боте"]
+]
+
+menu_markup = {"keyboard": menu_keyboard, "resize_keyboard": True}
+
+# ---------------- SYSTEM PROMPT ----------------
+SYSTEM_PROMPT = (
+    "Вы — экспертный помощник сайта vibegnews.tilda.ws. "
+    "Отвечайте понятно, полезно и дружелюбно. "
+    "Если вопрос выходит за рамки сайта, всё равно помогайте, но кратко и по делу."
+)
+
+# ---------------- ЗАПРОС К DEEPSEEK ----------------
+def ask_deepseek(user_text):
+    url = "https://api.deepseek.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_text}
+        ]
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        logging.info(f"DeepSeek статус: {r.status_code}")
+
+        if r.status_code == 200:
+            return r.json()["choices"][0]["message"]["content"]
+
+        return f"DeepSeek ошибка {r.status_code}: {r.text}"
+
+    except Exception as e:
+        logging.error(f"DeepSeek EXCEPTION: {e}")
+        return "Ошибка обработки запроса к ИИ. Попробуйте позже."
 
 
-# ==============================
-#      КНОПКИ / МЕНЮ
-# ==============================
+# ---------------- ОГРАНИЧЕНИЯ ----------------
+def check_limit(user_id):
+    today = datetime.utcnow().date()
+    record = user_message_count[user_id]
 
-# ---- Главное меню ----
-def main_menu():
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🛠 Советы по дому")
-    kb.add("💻 IT-FAQ")
-    kb.add("ℹ О проекте")
-    return kb
+    if record["date"] != today:
+        user_message_count[user_id] = {"date": today, "count": 0}
+        return True
 
-# ---- Подменю: Советы по дому ----
-def home_menu():
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🧹 Очистка диска C")
-    kb.add("📶 Настройка Wi-Fi")
-    kb.add("⚡ Ускорение компьютера")
-    kb.add("⬅ Назад")
-    return kb
-
-# ---- Подменю: IT-FAQ ----
-def it_menu():
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("🐞 Ошибки Windows")
-    kb.add("📦 Установка программ")
-    kb.add("🔐 Безопасность")
-    kb.add("⬅ Назад")
-    return kb
+    return record["count"] < MESSAGE_LIMIT_PER_DAY
 
 
-# ==============================
-#      ОБРАБОТЧИКИ
-# ==============================
+def increment_limit(user_id):
+    today = datetime.utcnow().date()
+    record = user_message_count[user_id]
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    await message.answer(
-        "Добро пожаловать в VibegNews бот!\nВыберите раздел:",
-        reply_markup=main_menu()
-    )
+    if record["date"] != today:
+        user_message_count[user_id] = {"date": today, "count": 1}
+    else:
+        record["count"] += 1
 
 
-# -------- Главное меню --------
-@dp.message_handler(lambda m: m.text == "🛠 Советы по дому")
-async def home(message: types.Message):
-    await message.answer("Выберите тему:", reply_markup=home_menu())
-
-@dp.message_handler(lambda m: m.text == "💻 IT-FAQ")
-async def it(message: types.Message):
-    await message.answer("Выберите тему:", reply_markup=it_menu())
-
-@dp.message_handler(lambda m: m.text == "ℹ О проекте")
-async def about(message: types.Message):
-    await message.answer("VibegNews — советы по дому и IT.\nАвтор: BegunAI")
-
-
-# -------- Подменю: Советы по дому --------
-@dp.message_handler(lambda m: m.text == "🧹 Очистка диска C")
-async def clean_disk(message: types.Message):
-    await message.answer(
-        "🧹 Как очистить диск C:\n"
-        "1. Очистка через «Параметры → Память»\n"
-        "2. Удаление временных файлов\n"
-        "3. Чистка корзины\n"
-        "4. Программы: BleachBit, CCleaner\n"
-    )
-
-@dp.message_handler(lambda m: m.text == "📶 Настройка Wi-Fi")
-async def wifi(message: types.Message):
-    await message.answer(
-        "📶 Настройка Wi-Fi:\n"
-        "• Перезагрузка роутера\n"
-        "• Смена канала на 1, 6 или 11\n"
-        "• Пароль WPA2/WPA3\n"
-    )
-
-@dp.message_handler(lambda m: m.text == "⚡ Ускорение компьютера")
-async def speed_pc(message: types.Message):
-    await message.answer(
-        "⚡ Ускорение ПК:\n"
-        "• Отключение автозагрузки\n"
-        "• Чистка диска\n"
-        "• Замена HDD на SSD\n"
-    )
+# ---------------- TELEGRAM SEND ----------------
+def send_message(chat_id, text, reply_markup=menu_markup):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": json.dumps(reply_markup)
+    }
+    try:
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        logging.error(f"Ошибка отправки сообщения: {e}")
 
 
-# -------- Подменю: IT-FAQ --------
-@dp.message_handler(lambda m: m.text == "🐞 Ошибки Windows")
-async def win_errors(message: types.Message):
-    await message.answer(
-        "🐞 Ошибки Windows:\n"
-        "• Синий экран — проверка драйверов\n"
-        "• chkdsk /f /r\n"
-        "• sfc /scannow\n"
-    )
-
-@dp.message_handler(lambda m: m.text == "📦 Установка программ")
-async def install_soft(message: types.Message):
-    await message.answer(
-        "📦 Установка программ:\n"
-        "Рекомендуемые источники: FileHippo, Softpedia, Microsoft Store."
-    )
-
-@dp.message_handler(lambda m: m.text == "🔐 Безопасность")
-async def security(message: types.Message):
-    await message.answer(
-        "🔐 Безопасность:\n"
-        "• Антивирус Defender достаточно хорош\n"
-        "• Делайте резервные копии\n"
-        "• Не открывайте вложения от неизвестных"
-    )
+def send_inline(chat_id, text, button_text, button_url):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    markup = {
+        "inline_keyboard": [[{"text": button_text, "url": button_url}]]
+    }
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": json.dumps(markup)
+    }
+    try:
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        logging.error(f"Ошибка inline-кнопки: {e}")
 
 
-# -------- Назад --------
-@dp.message_handler(lambda m: m.text == "⬅ Назад")
-async def back(message: types.Message):
-    await message.answer("Вы вернулись в главное меню:", reply_markup=main_menu())
+# ---------------- FASTAPI ----------------
+app = FastAPI()
 
 
-# -------- Прочее --------
-@dp.message_handler()
-async def fallback(message: types.Message):
-    await message.answer("Пожалуйста, используйте кнопки меню 👇", reply_markup=main_menu())
+@app.get("/")
+async def root():
+    return {"message": "DeepSeek бот запущен! Webhook работает."}
 
 
-# ==============================
-#      ЗАПУСК
-# ==============================
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+@app.post("/webhook")
+async def webhook(request: Request):
+    update = await request.json()
+    logging.info(f"Получено обновление: {update}")
+
+    message = update.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    user_id = message.get("from", {}).get("id")
+    text = message.get("text", "")
+
+    if not chat_id or not user_id:
+        return JSONResponse({"ok": True})
+
+    # Антифлуд
+    now = time.time()
+    if now - user_last_message_time[user_id] < FLOOD_DELAY:
+        return JSONResponse({"ok": True})
+    user_last_message_time[user_id] = now
+
+    # Лимиты
+    if not check_limit(user_id):
+        send_message(chat_id, f"Вы использовали дневной лимит ({MESSAGE_LIMIT_PER_DAY}) сообщений. Попробуйте завтра.")
+        return JSONResponse({"ok": True})
+
+    increment_limit(user_id)
+
+    # ---------------- Обработчики меню ----------------
+    try:
+        if text == "/start":
+            send_message(
+                chat_id,
+                "Привет! Я умный помощник vibegnews.tilda.ws.\n\nВыберите раздел меню:"
+            )
+            return JSONResponse({"ok": True})
+
+        if text == "История":
+            send_message(chat_id, "Раздел *История*: интересные факты о Лазурном и Причерноморье.")
+            return JSONResponse({"ok": True})
+
+        if text == "Домоводство":
+            send_message(chat_id, "Домоводство: советы по дому, саду, винограду, быту.")
+            return JSONResponse({"ok": True})
+
+        if text == "IT для \"чайников\"":
+            send_message(chat_id, "Простые советы по компьютерам, смартфонам и интернету.")
+            return JSONResponse({"ok": True})
+
+        if text == "FAQ":
+            send_message(chat_id, "Задайте вопрос — я постараюсь помочь.")
+            return JSONResponse({"ok": True})
+
+        if text == "О боте":
+            send_inline(
+                chat_id,
+                "Бот — помощник сайта vibegnews.tilda.ws.\nРаботает на DeepSeek.",
+                "Перейти на сайт",
+                "https://vibegnews.tilda.ws/"
+            )
+            return JSONResponse({"ok": True})
+
+        # ----------- Генерация ответа через DeepSeek -----------
+        reply = ask_deepseek(text)
+        send_message(chat_id, reply)
+
+    except Exception as e:
+        logging.error(f"Ошибка обработки: {e}")
+
+    return JSONResponse({"ok": True})
