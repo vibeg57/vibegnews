@@ -1,118 +1,186 @@
 import os
-import time
 import requests
 from fastapi import FastAPI, Request
-from collections import deque
+from pydantic import BaseModel
 
 app = FastAPI()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# Telegram
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+TG_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+# GPTBots
 GPTBOTS_API_KEY = os.getenv("GPTBOTS_API_KEY")
-GPTBOTS_ASSISTANT_ID = os.getenv("GPTBOTS_ASSISTANT_ID")
+GPTBOTS_BOT_ID = os.getenv("GPTBOTS_BOT_ID")
 
-TELEGRAM_SEND_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-# Храним историю чата для каждого пользователя, максимум 3 сообщения
-# Структура: {user_id: {"messages": deque, "last_update": timestamp}}
-chat_history = {}
+# --- GPTBots запрос ---
+def ask_gptbots(user_id: str, text: str) -> str:
+    url = "https://api.gptbots.ai/v1/messages"
 
-# ---------- Очистка старой истории ----------
-def cleanup_history():
-    now = time.time()
-    expired_users = [user_id for user_id, data in chat_history.items()
-                     if now - data["last_update"] > 24 * 3600]  # 24 часа
-    for user_id in expired_users:
-        del chat_history[user_id]
-
-# ---------- GPTBOTS ----------
-def ask_gptbots(user_id: int, user_message: str) -> str:
-    cleanup_history()  # Очищаем старые записи перед добавлением нового
-
-    if user_id not in chat_history:
-        chat_history[user_id] = {"messages": deque(maxlen=3), "last_update": time.time()}
-
-    chat_history[user_id]["messages"].append({"role": "user", "content": user_message})
-    chat_history[user_id]["last_update"] = time.time()
-
-    url = "https://openapi.gptbots.ai/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {GPTBOTS_API_KEY}",
-    }
     payload = {
-        "assistant_id": GPTBOTS_ASSISTANT_ID,
-        "messages": list(chat_history[user_id]["messages"]),
+        "bot_id": GPTBOTS_BOT_ID,
+        "user_id": str(user_id),
+        "inputs": {"query": text}
     }
+
+    headers = {
+        "Authorization": f"Bearer {GPTBOTS_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    r = requests.post(url, json=payload, headers=headers)
+    print("GPTBots RAW:", r.text)
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=20)
-        data = response.json()
+        data = r.json()
+        return data.get("answer", "GPTBots не дал ответа.")
+    except:
+        return "Ошибка обработки ответа GPTBots."
 
-        if "choices" in data:
-            assistant_message = data["choices"][0]["message"]["content"]
-            chat_history[user_id]["messages"].append({"role": "assistant", "content": assistant_message})
-            chat_history[user_id]["last_update"] = time.time()
-            return assistant_message
 
-        return "Ошибка GPTBots: пустой ответ."
-
-    except Exception as e:
-        return f"Ошибка GPTBots: {e}"
-
-# ---------- TELEGRAM ----------
-def send_telegram_message(chat_id: int, text: str):
-    keyboard = {
-        "keyboard": [
-            [{"text": "История"}],
-            [{"text": "Домоводство"}],
-            [{"text": "IT для чайников"}],
-            [{"text": "FAQ"}],
-            [{"text": "О боте"}],
-        ],
-        "resize_keyboard": True,
-    }
-
+# --- Telegram: отправка ---
+def send_message(chat_id, text, reply_markup=None):
     payload = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
-        "reply_markup": keyboard,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    requests.post(f"{TG_API_URL}/sendMessage", json=payload)
+
+
+# --- Главное меню vibegnews ---
+def main_menu():
+    return {
+        "keyboard": [
+            [{"text": "📚 История"}],
+            [{"text": "🏡 Домоводство"}],
+            [{"text": "💻 IT для «чайников»"}],
+            [{"text": "❓ FAQ"}, {"text": "ℹ️ О боте"}]
+        ],
+        "resize_keyboard": True
     }
 
-    requests.post(TELEGRAM_SEND_URL, json=payload)
 
-# ---------- WEBHOOK ----------
+# Telegram update модель
+class Update(BaseModel):
+    update_id: int
+    message: dict | None = None
+
+
+# --- Webhook ---
 @app.post("/webhook")
-async def telegram_webhook(request: Request):
-    data = await request.json()
-    print("Incoming:", data)
+async def webhook(update: Update):
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+    if update.message:
+        chat_id = update.message["chat"]["id"]
+        text = update.message.get("text", "")
 
-        if not text:
-            send_telegram_message(chat_id, "Отправьте, пожалуйста, текстовое сообщение.")
+        # /start
+        if text == "/start":
+            send_message(
+                chat_id,
+                "Добро пожаловать! Выберите раздел:",
+                reply_markup=main_menu()
+            )
             return {"ok": True}
 
-        # --- Обработка кнопок ---
-        if text == "История":
-            answer = "Раздел «История». Что хотите узнать? 🙂"
-        elif text == "Домоводство":
-            answer = "Раздел «Домоводство» — советы по быту, уборке, ремонту."
-        elif text == "IT для чайников":
-            answer = "Раздел «IT для чайников» — простыми словами о технике."
-        elif text == "FAQ":
-            answer = "Раздел «FAQ» — полезные подсказки и ответы на частые вопросы."
-        elif text == "О боте":
-            answer = "Я помощник сайта Vibegnews. Задайте вопрос — и я подскажу!"
-        else:
-            answer = ask_gptbots(chat_id, text)
+        # --- История ---
+        if text == "📚 История":
+            send_message(
+                chat_id,
+                "Раздел <b>История</b> — факты о Лазурном, Причерноморье и краеведении.\n\n"
+                "📘 На сайте есть книги, документы и подборки.",
+                reply_markup=main_menu()
+            )
+            send_message(
+                chat_id,
+                "Открыть раздел:",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "📘 Перейти", "url": "https://vibegnews.tilda.ws/history"}]
+                    ]
+                }
+            )
+            return {"ok": True}
 
-        send_telegram_message(chat_id, answer)
+        # --- Домоводство ---
+        if text == "🏡 Домоводство":
+            send_message(
+                chat_id,
+                "Раздел <b>Домоводство</b>: садоводство, бытовые советы, виноградарство, экономия.",
+                reply_markup=main_menu()
+            )
+            send_message(
+                chat_id,
+                "Открыть раздел:",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "🏡 Перейти", "url": "https://vibegnews.tilda.ws/home"}]
+                    ]
+                }
+            )
+            return {"ok": True}
+
+        # --- IT для чайников ---
+        if text == "💻 IT для «чайников»":
+            send_message(
+                chat_id,
+                "Раздел <b>IT для начинающих</b>: смартфоны, компьютеры, интернет, нейросети.",
+                reply_markup=main_menu()
+            )
+            send_message(
+                chat_id,
+                "Открыть раздел:",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "💻 Перейти", "url": "https://vibegnews.tilda.ws/it"}]
+                    ]
+                }
+            )
+            return {"ok": True}
+
+        # --- FAQ ---
+        if text == "❓ FAQ":
+            send_message(
+                chat_id,
+                "В FAQ собраны популярные вопросы пользователей и ответы на них.",
+                reply_markup=main_menu()
+            )
+            send_message(
+                chat_id,
+                "Открыть FAQ:",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "❓ Перейти", "url": "https://vibegnews.tilda.ws/faq"}]
+                    ]
+                }
+            )
+            return {"ok": True}
+
+        # --- О боте ---
+        if text == "ℹ️ О боте":
+            send_message(
+                chat_id,
+                "<b>Бот vibegnews</b> — ассистент по темам сайта.\n"
+                "• Работает на GPTBots.ai\n"
+                "• Отвечает на бытовые и IT-вопросы\n"
+                "• Использует материалы vibegnews",
+                reply_markup=main_menu()
+            )
+            return {"ok": True}
+
+        # --- GPTBots основной режим ---
+        reply = ask_gptbots(chat_id, text)
+        send_message(chat_id, reply, reply_markup=main_menu())
 
     return {"ok": True}
 
+
+# Корневой маршрут
 @app.get("/")
-def home():
-    return {"status": "Bot running with menu"}
+async def root():
+    return {"status": "bot_running", "menu": "vibegnews"}
