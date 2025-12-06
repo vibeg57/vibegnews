@@ -1,6 +1,8 @@
 import os
+import time
 import requests
 from fastapi import FastAPI, Request
+from collections import deque
 
 app = FastAPI()
 
@@ -10,19 +12,36 @@ GPTBOTS_ASSISTANT_ID = os.getenv("GPTBOTS_ASSISTANT_ID")
 
 TELEGRAM_SEND_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
+# Храним историю чата для каждого пользователя, максимум 3 сообщения
+# Структура: {user_id: {"messages": deque, "last_update": timestamp}}
+chat_history = {}
+
+# ---------- Очистка старой истории ----------
+def cleanup_history():
+    now = time.time()
+    expired_users = [user_id for user_id, data in chat_history.items()
+                     if now - data["last_update"] > 24 * 3600]  # 24 часа
+    for user_id in expired_users:
+        del chat_history[user_id]
 
 # ---------- GPTBOTS ----------
-def ask_gptbots(user_message: str) -> str:
-    url = "https://openapi.gptbots.ai/v1/chat/completions"
+def ask_gptbots(user_id: int, user_message: str) -> str:
+    cleanup_history()  # Очищаем старые записи перед добавлением нового
 
+    if user_id not in chat_history:
+        chat_history[user_id] = {"messages": deque(maxlen=3), "last_update": time.time()}
+
+    chat_history[user_id]["messages"].append({"role": "user", "content": user_message})
+    chat_history[user_id]["last_update"] = time.time()
+
+    url = "https://openapi.gptbots.ai/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {GPTBOTS_API_KEY}",
     }
-
     payload = {
         "assistant_id": GPTBOTS_ASSISTANT_ID,
-        "messages": [{"role": "user", "content": user_message}],
+        "messages": list(chat_history[user_id]["messages"]),
     }
 
     try:
@@ -30,18 +49,18 @@ def ask_gptbots(user_message: str) -> str:
         data = response.json()
 
         if "choices" in data:
-            return data["choices"][0]["message"]["content"]
+            assistant_message = data["choices"][0]["message"]["content"]
+            chat_history[user_id]["messages"].append({"role": "assistant", "content": assistant_message})
+            chat_history[user_id]["last_update"] = time.time()
+            return assistant_message
 
         return "Ошибка GPTBots: пустой ответ."
 
     except Exception as e:
         return f"Ошибка GPTBots: {e}"
 
-
 # ---------- TELEGRAM ----------
 def send_telegram_message(chat_id: int, text: str):
-    """Отправка ответа + меню"""
-
     keyboard = {
         "keyboard": [
             [{"text": "История"}],
@@ -61,7 +80,6 @@ def send_telegram_message(chat_id: int, text: str):
     }
 
     requests.post(TELEGRAM_SEND_URL, json=payload)
-
 
 # ---------- WEBHOOK ----------
 @app.post("/webhook")
@@ -89,13 +107,11 @@ async def telegram_webhook(request: Request):
         elif text == "О боте":
             answer = "Я помощник сайта Vibegnews. Задайте вопрос — и я подскажу!"
         else:
-            # --- Отправляем в GPTBots ---
-            answer = ask_gptbots(text)
+            answer = ask_gptbots(chat_id, text)
 
         send_telegram_message(chat_id, answer)
 
     return {"ok": True}
-
 
 @app.get("/")
 def home():
